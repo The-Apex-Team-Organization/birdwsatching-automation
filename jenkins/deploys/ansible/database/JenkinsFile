@@ -1,0 +1,32 @@
+pipeline {
+
+  agent any
+
+  environment {
+    DB_PASSWORD = credentials('db_password')
+  }
+
+  stages {
+
+    stage('Checkout') {
+      steps {
+        checkout scm
+      }
+    }
+
+    stage('Run Ansible') {
+      steps {
+        sh '''
+
+          export ANSIBLE_HOST_KEY_CHECKING=False
+          ansible-inventory -i ansible/aws_ec2.yml --graph
+
+          ansible-playbook \
+            -i ansible/aws_ec2.yml ansible/db.yml \
+            -e db_password="$DB_PASSWORD"
+        '''
+      }
+    }
+
+  }
+}

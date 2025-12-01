@@ -1,0 +1,15 @@
+pipeline {
+  agent any
+  stages {
+    stage('Run Ansible') {
+      steps {
+        sshagent(credentials: ['consul']) {
+          sh '''
+            export ANSIBLE_HOST_KEY_CHECKING=False
+            ansible-playbook -i /var/lib/jenkins/workspace/Run-Servers/ansible/inventories/inventory_consul.ini ansible/consul.yml
+          '''
+        }
+      }
+    }
+  }
+}
