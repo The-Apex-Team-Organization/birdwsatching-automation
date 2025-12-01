@@ -1,2 +1,2 @@
 # birdwsatching-automation
-Repository for automation setup
+write your desription.
