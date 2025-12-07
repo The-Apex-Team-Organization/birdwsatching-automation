@@ -14,6 +14,7 @@ pipeline {
       steps {
         sh '''
           export ANSIBLE_HOST_KEY_CHECKING=False
+          export ANSIBLE_CONFIG=ansible/ansible.cfg
 
           ansible-inventory -i ansible/aws_ec2.yml --graph
 
