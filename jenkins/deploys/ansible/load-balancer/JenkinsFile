@@ -16,6 +16,11 @@ pipeline {
           export ANSIBLE_HOST_KEY_CHECKING=False
           export ANSIBLE_CONFIG=ansible/ansible.cfg
 
+          ansible-galaxy collection install \
+          -r ansible/collections/requirements.yml \
+          -p ~/.ansible/collections \
+          --force
+
           ansible-inventory -i ansible/aws_ec2.yml --graph
 
           ansible-playbook  -i ansible/aws_ec2.yml ansible/lb.yml -vvv
