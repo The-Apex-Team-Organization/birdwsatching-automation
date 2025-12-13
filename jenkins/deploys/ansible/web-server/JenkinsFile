@@ -1,0 +1,27 @@
+pipeline {
+  
+  agent any
+
+  environment {
+    DB_PASSWORD = credentials('db_password')
+  }
+
+  stages {
+  
+    stage('Run Ansible') {
+      steps {
+        withCredentials([string(credentialsId: 'github_token', variable: 'GITHUB_TOKEN')]) {
+          sh '''
+            export ANSIBLE_HOST_KEY_CHECKING=False
+
+            ansible-inventory -i ansible/aws_ec2.yml --graph
+
+            ansible-playbook -i ansible/aws_ec2.yml ansible/flask.yml \
+              -e db_password="$DB_PASSWORD" \
+              -e github_token="$GITHUB_TOKEN"
+          '''
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,170 @@
+---
+- name: Update db servers
+  hosts: _birdwatching_db_stage_01
+  connection: aws_ssm
+  become: true
+
+  tasks:
+     
+    - name: Ensure PostgreSQL and psycopg2 are installed
+      ansible.builtin.dnf:
+        name:
+          - postgresql16
+          - postgresql16-server
+          - postgresql16-contrib
+          - python3-psycopg2
+          - acl
+        state: present
+        update_cache: true
+
+    - name: Initialize PostgreSQL database
+      ansible.builtin.command: /usr/bin/postgresql-setup --initdb
+      args:
+        creates: /var/lib/pgsql/data/PG_VERSION
+
+    - name: Ensure PostgreSQL is running and enabled
+      ansible.builtin.systemd:
+        name: postgresql
+        state: started
+        enabled: true
+
+    - block:
+        - name: Create DB user with password
+          community.postgresql.postgresql_user:
+            name: "{{ db_user }}"
+            password: "{{ db_password }}"
+            state: present
+            login_user: postgres
+
+        - name: Create database owned by the user
+          community.postgresql.postgresql_db:
+            name: "{{ db_name }}"
+            owner: "{{ db_user }}"
+            state: present
+            login_user: postgres
+
+        - name: Create required tables (users, posts, black_list)
+          community.postgresql.postgresql_query:
+            db: "{{ db_name }}"
+            login_user: postgres
+            query: |
+              DROP TABLE IF EXISTS posts CASCADE;
+              DROP TABLE IF EXISTS users CASCADE;
+              DROP TABLE IF EXISTS black_list CASCADE;
+
+              CREATE TABLE users (
+                  id SERIAL PRIMARY KEY,
+                  user_role TEXT NOT NULL DEFAULT 'user',
+                  username TEXT NOT NULL UNIQUE,
+                  password TEXT NOT NULL
+              );
+
+              CREATE TABLE posts (
+                  id SERIAL PRIMARY KEY,
+                  user_id INTEGER NOT NULL,
+                  created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  location TEXT NOT NULL DEFAULT 'Kyiv',
+                  image_path TEXT NOT NULL
+              );
+
+              CREATE TABLE black_list (
+                  id SERIAL PRIMARY KEY,
+                  ip_address TEXT NOT NULL UNIQUE
+              );
+
+              INSERT INTO users (username, password, user_role) VALUES
+              ('root', 'scrypt:32768:8:1$zpJ5AjrxhFEQKSQR$8417ffc09c612344b571700b61b5672a9f1f89f8569e5db8b39ad6c20df976f2f2564dbfe046cfc68e2f80f09f3ceceb8d2292e34acb4c4bbb8ff6b4949b9521', 'admin');
+      become_user: postgres
+
+    - block:
+        - name: Grant ALL privileges on DB to user
+          community.postgresql.postgresql_privs:
+            db: "{{ db_name }}"
+            roles: "{{ db_user }}"
+            type: database
+            privs: ALL
+            state: present
+            login_user: postgres
+
+        - name: Grant USAGE,CREATE on schema public
+          community.postgresql.postgresql_privs:
+            db: "{{ db_name }}"
+            roles: "{{ db_user }}"
+            type: schema
+            objs: public
+            privs: USAGE,CREATE
+            state: present
+            login_user: postgres
+
+        - name: Grant ALL on all tables in public
+          community.postgresql.postgresql_privs:
+            db: "{{ db_name }}"
+            roles: "{{ db_user }}"
+            type: table
+            objs: ALL_IN_SCHEMA
+            schema: public
+            privs: ALL
+            state: present
+            login_user: postgres
+
+        - name: Grant USAGE/SELECT/UPDATE on all sequences in public
+          community.postgresql.postgresql_privs:
+            db: "{{ db_name }}"
+            roles: "{{ db_user }}"
+            type: sequence
+            objs: ALL_IN_SCHEMA
+            schema: public
+            privs: USAGE,SELECT,UPDATE
+            state: present
+            login_user: postgres
+      become_user: postgres
+
+    - block:
+        - name: Set listen_addresses
+          community.postgresql.postgresql_alter_system:
+            param: listen_addresses
+            value: "*"
+            login_user: postgres
+          notify: Restart PostgreSQL
+
+        - name: Add pg_hba rule
+          community.postgresql.postgresql_pg_hba:
+            dest: "/var/lib/pgsql/data/pg_hba.conf"
+            contype: host
+            databases: all
+            users: all
+            address: "{{ pg_allowed_net }}"
+            method: scram-sha-256
+            state: present
+          notify: Restart PostgreSQL
+      become_user: postgres
+
+    - name: Ensure Consul dirs exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0750"
+        owner: consul
+        group: consul
+      loop:
+        - /etc/consul.d
+        - /opt/consul
+
+    - name: Add consul config using jinja2
+      ansible.builtin.template:
+       src: ../consul/database/consul.hcl.j2
+       dest: /etc/consul.d/consul.hcl
+       mode: "0644"
+       force: true
+
+    - name: Ensure consul service is enabled and running
+      ansible.builtin.systemd:
+        name: consul
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Restart PostgreSQL
+      ansible.builtin.systemd:
+        name: postgresql
+        state: restarted
